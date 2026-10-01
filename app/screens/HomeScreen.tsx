@@ -19,6 +19,11 @@ import { MaterialIcons, Feather } from '@expo/vector-icons';
 
 import ProgressRing from '../components/ProgressRing';
 import WeeklyBarChart from '../components/WeeklyBarChart';
+import {
+  getPriorityColor,
+  getPriorityTint,
+  getPriorityLabel,
+} from '../theme/priorityColors';
 
 function formatDate(dateString?: string | null) {
   if (!dateString) return 'No due date';
@@ -242,11 +247,12 @@ export default function HomeScreen() {
           key={task.id}
           style={{
             padding: 12,
-            borderWidth: 1,
+            borderWidth: 2,
+            borderColor: getPriorityColor(task.priority),
             borderRadius: 8,
             marginTop: 20,
             marginBottom: 10,
-            backgroundColor: 'white',
+            backgroundColor: getPriorityTint(task.priority),
           }}
         >
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -273,7 +279,7 @@ export default function HomeScreen() {
             <Text style={{ marginTop: 4 }}>{task.description}</Text>
           )}
 
-          <Text style={{ marginTop: 8 }}>Priority: {task.priority}</Text>
+          <Text style={{ marginTop: 8 }}>Priority: {getPriorityLabel(task.priority)}</Text>
 
           <Text style={{ marginTop: 4 }}>Due: {formatDate(task.dueDate)}</Text>
 

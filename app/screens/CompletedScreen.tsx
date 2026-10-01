@@ -8,6 +8,7 @@ import {
 } from '../storage/taskStorage';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import { getPriorityColor, getPriorityTint } from '../theme/priorityColors';
 
 function formatDate(dateString?: string | null) {
   if (!dateString) return 'No date';
@@ -78,11 +79,12 @@ export default function CompletedScreen() {
           key={task.id}
           style={{
             padding: 12,
-            borderWidth: 1,
+            borderWidth: 2,
+            borderColor: getPriorityColor(task.priority),
             borderRadius: 8,
             marginTop: 20,
             marginBottom: 10,
-            backgroundColor: '#f7f7f7',
+            backgroundColor: getPriorityTint(task.priority),
           }}
         >
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
