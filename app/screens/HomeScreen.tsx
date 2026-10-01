@@ -19,6 +19,7 @@ import { MaterialIcons, Feather } from '@expo/vector-icons';
 
 import ProgressRing from '../components/ProgressRing';
 import WeeklyBarChart from '../components/WeeklyBarChart';
+import PriorityLegend from '../components/PriorityLegend';
 import {
   getPriorityColor,
   getPriorityTint,
@@ -218,6 +219,8 @@ export default function HomeScreen() {
         <Text style={{ fontSize: 22, fontWeight: 'bold', marginBottom: 10 }}>
           Dashboard
         </Text>
+
+        <PriorityLegend />
 
         <Text style={{ fontSize: 16, marginBottom: 10 }}>Daily Progress</Text>
         <ProgressRing segments={ringSegments} done={completedToday} />

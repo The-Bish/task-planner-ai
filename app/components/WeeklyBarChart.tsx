@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text } from 'react-native';
+import { View, Text, useWindowDimensions } from 'react-native';
 import Svg, { Rect, Text as SvgText } from 'react-native-svg';
 
 type Props = {
@@ -11,8 +11,11 @@ type Props = {
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export default function WeeklyBarChart({ data }: Props) {
-  const colWidth = 45;
-  const barWidth = 30;
+  const { width: screenWidth } = useWindowDimensions();
+  // screen padding (32) + dashboard padding (32) + white card padding (24)
+  const available = screenWidth - 32 - 32 - 24;
+  const colWidth = Math.max(28, Math.min(45, Math.floor(available / 7)));
+  const barWidth = Math.round(colWidth * 0.67);
   const baseline = 140;
   const plotHeight = 115;
 
@@ -21,7 +24,15 @@ export default function WeeklyBarChart({ data }: Props) {
   const unit = plotHeight / maxCount;
 
   return (
-    <View style={{ marginTop: 10 }}>
+    <View
+      style={{
+        marginTop: 10,
+        backgroundColor: 'white',
+        borderRadius: 12,
+        padding: 12,
+        alignSelf: 'center',
+      }}
+    >
       <Text style={{ fontSize: 16, marginBottom: 6 }}>Completed This Week</Text>
 
       <Svg width={colWidth * 7} height={160}>
