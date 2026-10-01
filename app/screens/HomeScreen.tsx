@@ -44,7 +44,7 @@ export default function HomeScreen() {
   const [completedToday, setCompletedToday] = useState(0);
   const [completedThisWeek, setCompletedThisWeek] = useState<number[]>([0, 0, 0, 0, 0, 0, 0]);
   const [streak, setStreak] = useState(0);
-  const [dailyGoal, setDailyGoal] = useState(5);
+  const [completedTodayTasks, setCompletedTodayTasks] = useState<any[]>([]);
   const [overdueTasks, setOverdueTasks] = useState(0);
   const [nextDeadline, setNextDeadline] = useState<string | null>(null);
 
@@ -66,11 +66,16 @@ export default function HomeScreen() {
 
     // Completed today
     const today = new Date().toDateString();
-    setCompletedToday(
-      completed.filter(
+    const doneToday = completed
+      .filter(
         (t) => t.completedAt && new Date(t.completedAt).toDateString() === today
-      ).length
-    );
+      )
+      .sort(
+        (a, b) =>
+          new Date(a.completedAt).getTime() - new Date(b.completedAt).getTime()
+      );
+    setCompletedTodayTasks(doneToday);
+    setCompletedToday(doneToday.length);
 
     // Weekly data (Sun–Sat)
     const now = new Date();
@@ -182,6 +187,13 @@ export default function HomeScreen() {
     );
   };
 
+  // One ring segment per task for today: completed ones in their priority
+  // colour (in the order they were finished), open ones left grey.
+  const ringSegments: (string | null)[] = [
+    ...completedTodayTasks.map((t) => getPriorityColor(t.priority)),
+    ...tasks.map(() => null),
+  ];
+
   return (
     <ScrollView style={{ padding: 16 }}>
       {/* Dashboard */}
@@ -197,10 +209,8 @@ export default function HomeScreen() {
           Dashboard
         </Text>
 
-        <Text style={{ fontSize: 16, marginBottom: 6 }}>
-          Daily Progress: {completedToday}/{dailyGoal}
-        </Text>
-        <ProgressRing progress={completedToday / dailyGoal} />
+        <Text style={{ fontSize: 16, marginBottom: 10 }}>Daily Progress</Text>
+        <ProgressRing segments={ringSegments} done={completedToday} />
 
         <WeeklyBarChart data={completedThisWeek} />
 
@@ -224,11 +234,13 @@ export default function HomeScreen() {
             textAlign: 'center',
           }}
         >
-          {completedToday === 0
+          {ringSegments.length === 0
+            ? 'Add a task to get started!'
+            : completedToday === 0
             ? 'Let’s get something done today!'
-            : completedToday < dailyGoal
+            : completedToday < ringSegments.length
             ? 'Great start — keep going!'
-            : 'Amazing! You smashed your daily goal!'}
+            : 'Amazing! You cleared everything!'}
         </Text>
       </View>
 
