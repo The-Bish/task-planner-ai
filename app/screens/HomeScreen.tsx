@@ -306,6 +306,21 @@ export default function HomeScreen() {
 
           <Text style={{ marginTop: 8 }}>Priority: {getPriorityLabel(task.priority)}</Text>
 
+          {task.category && (
+            <View
+              style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}
+            >
+              <MaterialIcons
+                name={task.category === 'work' ? 'business' : 'home'}
+                size={18}
+                color="#555"
+              />
+              <Text style={{ marginLeft: 6 }}>
+                {task.category === 'work' ? 'Work' : 'Personal'}
+              </Text>
+            </View>
+          )}
+
           <Text style={{ marginTop: 4 }}>Due: {formatDate(task.dueDate)}</Text>
 
           <View
