@@ -42,7 +42,7 @@ export default function HomeScreen() {
   const [tasks, setTasks] = useState<any[]>([]);
 
   const [completedToday, setCompletedToday] = useState(0);
-  const [completedThisWeek, setCompletedThisWeek] = useState<number[]>([0, 0, 0, 0, 0, 0, 0]);
+  const [completedThisWeek, setCompletedThisWeek] = useState<string[][]>([[], [], [], [], [], [], []]);
   const [streak, setStreak] = useState(0);
   const [completedTodayTasks, setCompletedTodayTasks] = useState<any[]>([]);
   const [overdueTasks, setOverdueTasks] = useState(0);
@@ -78,17 +78,27 @@ export default function HomeScreen() {
     setCompletedToday(doneToday.length);
 
     // Weekly data (Sun–Sat)
-    const now = new Date();
-    const weekData = [0, 0, 0, 0, 0, 0, 0];
-    completed.forEach((t) => {
-      if (!t.completedAt) return;
-      const d = new Date(t.completedAt);
-      const diff = now.getTime() - d.getTime();
-      if (diff <= 7 * 24 * 60 * 60 * 1000) {
-        const dayIndex = d.getDay(); // 0=Sun ... 6=Sat
-        weekData[dayIndex] += 1;
-      }
-    });
+    // Each day holds the priority colours of the tasks finished that day,
+    // oldest first, so the bar stacks up in the order they were completed.
+    const startOfWeek = new Date();
+    startOfWeek.setHours(0, 0, 0, 0);
+    startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
+    const endOfWeek = new Date(startOfWeek);
+    endOfWeek.setDate(endOfWeek.getDate() + 7);
+
+    const weekData: string[][] = [[], [], [], [], [], [], []];
+    [...completed]
+      .filter((t) => t.completedAt)
+      .sort(
+        (a, b) =>
+          new Date(a.completedAt).getTime() - new Date(b.completedAt).getTime()
+      )
+      .forEach((t) => {
+        const d = new Date(t.completedAt);
+        if (d >= startOfWeek && d < endOfWeek) {
+          weekData[d.getDay()].push(getPriorityColor(t.priority)); // 0=Sun ... 6=Sat
+        }
+      });
     setCompletedThisWeek(weekData);
 
     // Streak
