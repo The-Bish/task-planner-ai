@@ -1,185 +1,509 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Animated } from 'react-native';
-import { Picker } from '@react-native-picker/picker';
-import { useNavigation } from '@react-navigation/native';
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  Modal,
+  Button,
+} from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Picker } from "@react-native-picker/picker";
+import { Ionicons } from "@expo/vector-icons";
+import Svg, { Rect, Text as SvgText, Line } from "react-native-svg";
 
-import { loadCompletedTasks } from '../storage/taskStorage';
+type Task = {
+  id: string;
+  title: string;
+  priority: string;
+  completedAt: string;
+  completionStatus: string;
+  isCompleted: boolean;
+};
 
-import PriorityGraph from '../components/analytics/PriorityGraph';
-import CompletionGraph from '../components/analytics/CompletionGraph';
+const priorityColors: Record<string, string> = {
+  "urgent-important": "#2ecc71",
+  "urgent-not-important": "#3498db",
+  "not-urgent-important": "#f39c12",
+  "not-urgent-not-important": "#e74c3c",
+};
+
+const priorityLabels = [
+  { value: "urgent-important", label: "Urgent & Important" },
+  { value: "urgent-not-important", label: "Urgent & Not Important" },
+  { value: "not-urgent-important", label: "Not Urgent & Important" },
+  { value: "not-urgent-not-important", label: "Not Urgent & Not Important" },
+];
+
+const formatDate = (d: Date) =>
+  `${d.getDate().toString().padStart(2, "0")}/${(d.getMonth() + 1)
+    .toString()
+    .padStart(2, "0")}/${d.getFullYear()}`;
 
 export default function ArchiveScreen() {
-  const navigation = useNavigation();
+  const [allTasks, setAllTasks] = useState<Task[]>([]);
+  const [priorityFilter, setPriorityFilter] = useState<string | null>(null);
+  const [timelineRange, setTimelineRange] = useState("week");
 
-  const [completed, setCompleted] = useState([]);
+  const [showPriorityPicker, setShowPriorityPicker] = useState(false);
+  const [showTimelinePicker, setShowTimelinePicker] = useState(false);
 
-  const [range, setRange] = useState('today');
-  const [filter, setFilter] = useState('none');
-
-  const [pickerOpenRange, setPickerOpenRange] = useState(false);
-  const [pickerOpenFilter, setPickerOpenFilter] = useState(false);
-
-  const rotateAnimRange = useState(new Animated.Value(0))[0];
-  const rotateAnimFilter = useState(new Animated.Value(0))[0];
-
-  const toggleRange = () => {
-    setPickerOpenRange(!pickerOpenRange);
-    Animated.timing(rotateAnimRange, {
-      toValue: pickerOpenRange ? 0 : 1,
-      duration: 200,
-      useNativeDriver: true,
-    }).start();
-  };
-
-  const toggleFilter = () => {
-    setPickerOpenFilter(!pickerOpenFilter);
-    Animated.timing(rotateAnimFilter, {
-      toValue: pickerOpenFilter ? 0 : 1,
-      duration: 200,
-      useNativeDriver: true,
-    }).start();
-  };
-
-  const chevronRange = rotateAnimRange.interpolate({
-    inputRange: [0, 1],
-    outputRange: ['0deg', '180deg'],
-  });
-
-  const chevronFilter = rotateAnimFilter.interpolate({
-    inputRange: [0, 1],
-    outputRange: ['0deg', '180deg'],
-  });
-
+  // Load tasks
   useEffect(() => {
-    const load = async () => {
-      const tasks = await loadCompletedTasks();
-      setCompleted(tasks || []);
+    const loadTasks = async () => {
+      const raw = await AsyncStorage.getItem("tasks");
+      if (!raw) return;
+      const parsed: Task[] = JSON.parse(raw);
+      setAllTasks(parsed.filter((t) => t.isCompleted));
     };
-    load();
+    loadTasks();
   }, []);
 
-  const rangeLabel =
-    range === 'today'
-      ? 'Today'
-      : range === 'week'
-      ? 'This Week'
-      : range === 'month'
-      ? 'This Month'
-      : 'Since Start';
+  // Apply priority filter
+  const filteredTasks = useMemo(() => {
+    return priorityFilter
+      ? allTasks.filter((t) => t.priority === priorityFilter)
+      : allTasks;
+  }, [allTasks, priorityFilter]);
 
-  const filterLabel =
-    filter === 'none'
-      ? 'No Filter'
-      : filter === 'priority'
-      ? 'Priority'
-      : 'Completion Status';
+  // Priority graph counts
+  const priorityCounts = useMemo(() => {
+    const counts: Record<string, number> = {
+      "urgent-important": 0,
+      "urgent-not-important": 0,
+      "not-urgent-important": 0,
+      "not-urgent-not-important": 0,
+    };
+    filteredTasks.forEach((t) => counts[t.priority]++);
+    return counts;
+  }, [filteredTasks]);
+
+  const maxPriorityCount = Math.max(
+    1,
+    ...Object.values(priorityCounts).map((v) => v || 0)
+  );
+
+  // Timeline range
+  const today = new Date();
+  const start = new Date();
+
+  if (timelineRange === "today") {
+    // start = today
+  } else if (timelineRange === "week") {
+    start.setDate(today.getDate() - 6);
+  } else if (timelineRange === "month") {
+    start.setDate(today.getDate() - 29);
+  } else {
+    // since start
+    const earliest = filteredTasks.reduce((acc, t) => {
+      const d = new Date(t.completedAt);
+      return d < acc ? d : acc;
+    }, today);
+    start.setTime(earliest.getTime());
+  }
+
+  // Build days
+  const days: Date[] = [];
+  const cursor = new Date(start);
+  while (cursor <= today) {
+    days.push(new Date(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  // Group tasks by day
+  const grouped = days.map((day) => {
+    const dayStr = day.toISOString().split("T")[0];
+    const dayTasks = filteredTasks.filter(
+      (t) => t.completedAt.split("T")[0] === dayStr
+    );
+    return { day, tasks: dayTasks };
+  });
+
+  // Y-axis max
+  const maxTasksPerDay = Math.max(
+    1,
+    ...grouped.map((g) => g.tasks.length)
+  );
+  const yMax = maxTasksPerDay + 1;
+
+  const timelineHeight = 200;
+  const barWidth = 12;
+  const barSpacing = 4;
+  const daySpacing = 40;
 
   return (
-    <ScrollView style={{ padding: 16 }}>
-      <Text style={{ fontSize: 26, fontWeight: 'bold', marginBottom: 20 }}>
-        Archive Analytics
-      </Text>
+    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <Text style={styles.title}>Archive & Analytics</Text>
 
-      {/* RANGE PICKER */}
-      <TouchableOpacity
-        onPress={toggleRange}
-        style={{
-          backgroundColor: '#f0f0f0',
-          borderRadius: 8,
-          paddingVertical: 14,
-          paddingHorizontal: 16,
-          marginBottom: 10,
-          flexDirection: 'row',
-          justifyContent: 'center',
-          alignItems: 'center',
-          gap: 6,
-        }}
-      >
-        <Text style={{ fontSize: 16, fontWeight: '600' }}>{rangeLabel}</Text>
-
-        <Animated.View style={{ transform: [{ rotate: chevronRange }] }}>
-          <Text style={{ fontSize: 20 }}>⌄</Text>
-        </Animated.View>
-      </TouchableOpacity>
-
-      {pickerOpenRange && (
-        <Picker
-          selectedValue={range}
-          onValueChange={(v) => {
-            setRange(v);
-            setPickerOpenRange(false);
-            rotateAnimRange.setValue(0);
-          }}
-          style={{
-            backgroundColor: '#f0f0f0',
-            borderRadius: 8,
-            marginBottom: 20,
-          }}
+      {/* Priority Picker */}
+      <View style={{ marginVertical: 20 }}>
+        <TouchableOpacity
+          style={styles.filterButton}
+          onPress={() => setShowPriorityPicker(true)}
         >
-          <Picker.Item label="Today" value="today" />
-          <Picker.Item label="This Week" value="week" />
-          <Picker.Item label="This Month" value="month" />
-          <Picker.Item label="Since Start" value="all" />
-        </Picker>
-      )}
+          <Text style={styles.filterButtonText}>
+            {priorityFilter
+              ? priorityLabels.find((p) => p.value === priorityFilter)?.label
+              : "Filter by Priority"}
+          </Text>
+          <Ionicons name="chevron-down" size={20} />
+        </TouchableOpacity>
 
-      {/* FILTER PICKER */}
-      <TouchableOpacity
-        onPress={toggleFilter}
-        style={{
-          backgroundColor: '#f0f0f0',
-          borderRadius: 8,
-          paddingVertical: 14,
-          paddingHorizontal: 16,
-          marginBottom: 10,
-          flexDirection: 'row',
-          justifyContent: 'center',
-          alignItems: 'center',
-          gap: 6,
-        }}
-      >
-        <Text style={{ fontSize: 16, fontWeight: '600' }}>{filterLabel}</Text>
+        {showPriorityPicker && (
+          <Modal transparent animationType="slide">
+            <View style={styles.modalOverlay}>
+              <View style={styles.modalContent}>
+                <Text style={styles.modalTitle}>Select Priority</Text>
+                <Picker
+                  selectedValue={priorityFilter}
+                  onValueChange={(v) => setPriorityFilter(v)}
+                >
+                  <Picker.Item label="All Priorities" value={null} />
+                  {priorityLabels.map((p) => (
+                    <Picker.Item key={p.value} label={p.label} value={p.value} />
+                  ))}
+                </Picker>
+                <Button title="Done" onPress={() => setShowPriorityPicker(false)} />
+              </View>
+            </View>
+          </Modal>
+        )}
+      </View>
 
-        <Animated.View style={{ transform: [{ rotate: chevronFilter }] }}>
-          <Text style={{ fontSize: 20 }}>⌄</Text>
-        </Animated.View>
-      </TouchableOpacity>
-
-      {pickerOpenFilter && (
-        <Picker
-          selectedValue={filter}
-          onValueChange={(v) => {
-            setFilter(v);
-            setPickerOpenFilter(false);
-            rotateAnimFilter.setValue(0);
-          }}
-          style={{
-            backgroundColor: '#f0f0f0',
-            borderRadius: 8,
-            marginBottom: 20,
-          }}
+      {/* Timeline Picker */}
+      <View style={{ marginVertical: 10 }}>
+        <TouchableOpacity
+          style={styles.filterButton}
+          onPress={() => setShowTimelinePicker(true)}
         >
-          <Picker.Item label="None" value="none" />
-          <Picker.Item label="Priority" value="priority" />
-          <Picker.Item label="Completion Status" value="completion" />
-        </Picker>
-      )}
+          <Text style={styles.filterButtonText}>
+            {timelineRange === "today"
+              ? "Today"
+              : timelineRange === "week"
+              ? "This Week"
+              : timelineRange === "month"
+              ? "This Month"
+              : "Since Start"}
+          </Text>
+          <Ionicons name="chevron-down" size={20} />
+        </TouchableOpacity>
 
-      {/* GRAPHS */}
-      {filter === 'priority' && (
-        <PriorityGraph tasks={completed} />
-      )}
+        {showTimelinePicker && (
+          <Modal transparent animationType="slide">
+            <View style={styles.modalOverlay}>
+              <View style={styles.modalContent}>
+                <Text style={styles.modalTitle}>Timeline Range</Text>
+                <Picker
+                  selectedValue={timelineRange}
+                  onValueChange={(v) => setTimelineRange(v)}
+                >
+                  <Picker.Item label="Today" value="today" />
+                  <Picker.Item label="This Week" value="week" />
+                  <Picker.Item label="This Month" value="month" />
+                  <Picker.Item label="Since Start" value="all" />
+                </Picker>
+                <Button title="Done" onPress={() => setShowTimelinePicker(false)} />
+              </View>
+            </View>
+          </Modal>
+        )}
+      </View>
 
-      {filter === 'completion' && (
-        <CompletionGraph
-          analytics={{
-            early: completed.filter(t => new Date(t.completedAt) < new Date(t.dueDate)).length,
-            onTime: completed.filter(t => new Date(t.completedAt).toDateString() === new Date(t.dueDate).toDateString()).length,
-            late: completed.filter(t => new Date(t.completedAt) > new Date(t.dueDate)).length,
-          }}
-        />
-      )}
+      {/* Priority Graph */}
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>Tasks by Priority</Text>
+
+        {/* Legend */}
+        <View style={{ flexDirection: "row", marginBottom: 10 }}>
+          {priorityLabels.map((p) => (
+            <View key={p.value} style={styles.legendItem}>
+              <View
+                style={[styles.legendColor, { backgroundColor: priorityColors[p.value] }]}
+              />
+              <Text style={styles.legendText}>{p.label}</Text>
+            </View>
+          ))}
+        </View>
+
+        {/* Graph */}
+        <Svg width={320} height={180}>
+          {priorityLabels.map((p, index) => {
+            const count = priorityCounts[p.value];
+            const barHeight = (count / maxPriorityCount) * 120;
+            const x = 20 + index * 70;
+            const y = 150 - barHeight;
+
+            return (
+              <React.Fragment key={p.value}>
+                <Rect
+                  x={x}
+                  y={y}
+                  width={40}
+                  height={barHeight}
+                  fill={priorityColors[p.value]}
+                  rx={6}
+                />
+                <SvgText
+                  x={x + 20}
+                  y={y - 6}
+                  fontSize={12}
+                  fill="#333"
+                  textAnchor="middle"
+                >
+                  {count}
+                </SvgText>
+                <SvgText
+                  x={x + 20}
+                  y={165}
+                  fontSize={10}
+                  fill="#555"
+                  textAnchor="middle"
+                >
+                  {p.label}
+                </SvgText>
+              </React.Fragment>
+            );
+          })}
+        </Svg>
+      </View>
+
+      {/* Timeline Graph */}
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>Completion Timeline</Text>
+
+        {/* Legend */}
+        <View style={{ flexDirection: "row", marginBottom: 10 }}>
+          {priorityLabels.map((p) => (
+            <View key={p.value} style={styles.legendItem}>
+              <View
+                style={[styles.legendColor, { backgroundColor: priorityColors[p.value] }]}
+              />
+              <Text style={styles.legendText}>{p.label}</Text>
+            </View>
+          ))}
+        </View>
+
+        {/* Y-axis + timeline */}
+        <View style={{ flexDirection: "row" }}>
+          {/* Y-axis numbers */}
+          <View style={{ width: 30 }}>
+            {Array.from({ length: yMax }).map((_, i) => (
+              <Text
+                key={i}
+                style={{
+                  position: "absolute",
+                  bottom: (timelineHeight / yMax) * i - 6,
+                  fontSize: 12,
+                }}
+              >
+                {i}
+              </Text>
+            ))}
+          </View>
+
+          {/* Scrollable timeline */}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            <Svg height={timelineHeight} width={days.length * daySpacing}>
+              {/* Grid lines */}
+              {Array.from({ length: yMax }).map((_, i) => (
+                <Line
+                  key={i}
+                  x1={0}
+                  y1={timelineHeight - (timelineHeight / yMax) * i}
+                  x2={days.length * daySpacing}
+                  y2={timelineHeight - (timelineHeight / yMax) * i}
+                  stroke="#ddd"
+                  strokeWidth={1}
+                />
+              ))}
+
+              {/* Bars */}
+              {grouped.map((g, dayIndex) =>
+                g.tasks.map((task, barIndex) => {
+                  const barHeight =
+                    (g.tasks.length / yMax) * timelineHeight;
+
+                  return (
+                    <Rect
+                      key={task.id}
+                      x={
+                        dayIndex * daySpacing +
+                        barIndex * (barWidth + barSpacing)
+                      }
+                      y={timelineHeight - barHeight}
+                      width={barWidth}
+                      height={barHeight}
+                      fill={priorityColors[task.priority]}
+                      rx={3}
+                    />
+                  );
+                })
+              )}
+
+              {/* X-axis labels */}
+              {grouped.map((g, dayIndex) => (
+                <SvgText
+                  key={dayIndex}
+                  x={dayIndex * daySpacing + 10}
+                  y={timelineHeight - 2}
+                  fontSize={10}
+                  fill="#333"
+                  textAnchor="middle"
+                >
+                  {g.day.getDate()}
+                </SvgText>
+              ))}
+            </Svg>
+          </ScrollView>
+        </View>
+      </View>
+
+      {/* Filtered Task List */}
+      <View style={{ marginTop: 30 }}>
+        <Text style={styles.sectionTitle}>Filtered Tasks</Text>
+
+        {filteredTasks.length === 0 ? (
+          <Text style={styles.emptyText}>No tasks match this filter.</Text>
+        ) : (
+          filteredTasks.map((task) => {
+            const color = priorityColors[task.priority];
+            const label =
+              priorityLabels.find((p) => p.value === task.priority)?.label ??
+              task.priority.replace(/-/g, " ");
+
+            return (
+              <View key={task.id} style={styles.taskCardWrapper}>
+                <View
+                  style={[styles.taskColorBar, { backgroundColor: color }]}
+                />
+                <View style={styles.taskCardContent}>
+                  <Text style={styles.taskTitle}>{task.title}</Text>
+                  <Text style={styles.taskLine}>
+                    Completed: {formatDate(new Date(task.completedAt))}
+                  </Text>
+                  <Text style={[styles.taskLine, { color }]}>
+                    Priority: {label}
+                  </Text>
+                  <Text style={[styles.taskLine, { color: "#555" }]}>
+                    Status: {task.completionStatus}
+                  </Text>
+                </View>
+              </View>
+            );
+          })
+        )}
+      </View>
     </ScrollView>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: "#f5f7fb",
+  },
+  content: {
+    padding: 16,
+    paddingBottom: 40,
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: "bold",
+    marginBottom: 8,
+  },
+  filterButton: {
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#ccc",
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#fff",
+  },
+  filterButtonText: {
+    fontSize: 16,
+    marginRight: 8,
+  },
+  modalOverlay: {
+    flex: 1,
+    justifyContent: "center",
+    backgroundColor: "#00000055",
+  },
+  modalContent: {
+    backgroundColor: "white",
+    margin: 20,
+    borderRadius: 12,
+    padding: 20,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    marginBottom: 10,
+  },
+  card: {
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 16,
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 2,
+    marginBottom: 20,
+  },
+  cardTitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    marginBottom: 12,
+  },
+  legendItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginRight: 12,
+  },
+  legendColor: {
+    width: 12,
+    height: 12,
+    borderRadius: 3,
+    marginRight: 4,
+  },
+  legendText: {
+    fontSize: 12,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    marginBottom: 10,
+  },
+  emptyText: {
+    color: "#777",
+  },
+  taskCardWrapper: {
+    flexDirection: "row",
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    marginBottom: 12,
+    shadowColor: "#000",
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  taskColorBar: {
+    width: 10,
+    borderTopLeftRadius: 12,
+    borderBottomLeftRadius: 12,
+  },
+  taskCardContent: {
+    padding: 12,
+    flex: 1,
+  },
+  taskTitle: {
+    fontWeight: "bold",
+    fontSize: 16,
+  },
+  taskLine: {
+    marginTop: 4,
+  },
+});
 

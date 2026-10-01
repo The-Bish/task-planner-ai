@@ -1,128 +1,164 @@
-import React, { useEffect } from 'react';
-import { View, Text } from 'react-native';
-import Svg, { Rect } from 'react-native-svg';
-import Animated, {
-  useSharedValue,
-  useAnimatedProps,
-  withTiming,
-} from 'react-native-reanimated';
+import React, { useMemo } from "react";
+import { View, Text, ScrollView } from "react-native";
+import Svg, { Rect, Text as SvgText, Line } from "react-native-svg";
 
-// Animated SVG rect
-const AnimatedRect = Animated.createAnimatedComponent(Rect);
+const priorityColors = {
+  "urgent-important": "#2ecc71",
+  "urgent-not-important": "#3498db",
+  "not-urgent-important": "#f39c12",
+  "not-urgent-not-important": "#e74c3c",
+};
 
-export default function CompletionTimelineGraph({ timelineData }) {
-  /**
-   * timelineData format:
-   * [
-   *   { date: "2026-09-25", early: 2, onTime: 1, late: 0 },
-   *   { date: "2026-09-26", early: 0, onTime: 3, late: 1 },
-   *   ...
-   * ]
-   */
+export default function CompletionTimelineGraph({ tasks, range }) {
+  // 1. Build date range
+  const today = new Date();
+  const start = new Date();
 
-  const max = Math.max(
-    ...timelineData.map((d) => d.early + d.onTime + d.late),
-    1
+  if (range === "today") {
+    // start = today
+  } else if (range === "week") {
+    start.setDate(today.getDate() - 6);
+  } else if (range === "month") {
+    start.setDate(today.getDate() - 29);
+  } else {
+    // since start — earliest task date
+    const earliest = tasks.reduce((acc, t) => {
+      const d = new Date(t.completedAt);
+      return d < acc ? d : acc;
+    }, today);
+    start.setTime(earliest.getTime());
+  }
+
+  // 2. Build list of days
+  const days = [];
+  const cursor = new Date(start);
+  while (cursor <= today) {
+    days.push(new Date(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  // 3. Group tasks by day
+  const grouped = days.map((day) => {
+    const dayStr = day.toISOString().split("T")[0];
+    const dayTasks = tasks.filter(
+      (t) => t.completedAt.split("T")[0] === dayStr
+    );
+    return { day, tasks: dayTasks };
+  });
+
+  // 4. Determine Y-axis max
+  const maxTasks = Math.max(
+    1,
+    ...grouped.map((g) => g.tasks.length)
   );
+  const yMax = maxTasks + 1;
+
+  const chartHeight = 200;
+  const barWidth = 12;
+  const barSpacing = 4;
+  const daySpacing = 40;
 
   return (
-    <View style={{ marginTop: 30, alignItems: 'center' }}>
-      <Text style={{ fontSize: 20, fontWeight: '600', marginBottom: 10 }}>
-        Completion Timeline
-      </Text>
+    <View style={{ marginTop: 20 }}>
+      {/* Legend */}
+      <View style={{ flexDirection: "row", marginBottom: 10 }}>
+        {Object.entries(priorityColors).map(([key, color]) => (
+          <View
+            key={key}
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              marginRight: 12,
+            }}
+          >
+            <View
+              style={{
+                width: 12,
+                height: 12,
+                backgroundColor: color,
+                marginRight: 4,
+                borderRadius: 3,
+              }}
+            />
+            <Text style={{ fontSize: 12 }}>
+              {key.replace(/-/g, " ")}
+            </Text>
+          </View>
+        ))}
+      </View>
 
-      <Svg width={timelineData.length * 70} height={260}>
-        {timelineData.map((d, i) => {
-          const total = d.early + d.onTime + d.late;
+      {/* Y-axis numbers */}
+      <View style={{ flexDirection: "row" }}>
+        <View style={{ width: 30 }}>
+          {Array.from({ length: yMax }).map((_, i) => (
+            <Text
+              key={i}
+              style={{
+                position: "absolute",
+                bottom: (chartHeight / yMax) * i - 6,
+                fontSize: 12,
+              }}
+            >
+              {i}
+            </Text>
+          ))}
+        </View>
 
-          // Animated heights
-          const earlyHeight = useSharedValue(0);
-          const onTimeHeight = useSharedValue(0);
-          const lateHeight = useSharedValue(0);
-
-          useEffect(() => {
-            earlyHeight.value = withTiming((d.early / max) * 180, { duration: 600 });
-            onTimeHeight.value = withTiming((d.onTime / max) * 180, { duration: 600 });
-            lateHeight.value = withTiming((d.late / max) * 180, { duration: 600 });
-          }, [d]);
-
-          const earlyProps = useAnimatedProps(() => ({
-            height: earlyHeight.value,
-            y: 200 - earlyHeight.value,
-          }));
-
-          const onTimeProps = useAnimatedProps(() => ({
-            height: onTimeHeight.value,
-            y: 200 - earlyHeight.value - onTimeHeight.value,
-          }));
-
-          const lateProps = useAnimatedProps(() => ({
-            height: lateHeight.value,
-            y: 200 - earlyHeight.value - onTimeHeight.value - lateHeight.value,
-          }));
-
-          return (
-            <React.Fragment key={i}>
-              {/* Early (green) */}
-              <AnimatedRect
-                x={i * 70 + 20}
-                width={40}
-                animatedProps={earlyProps}
-                fill="#2ecc71"
-                rx={4}
+        {/* Scrollable timeline */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          <Svg height={chartHeight} width={days.length * daySpacing}>
+            {/* Horizontal grid lines */}
+            {Array.from({ length: yMax }).map((_, i) => (
+              <Line
+                key={i}
+                x1={0}
+                y1={chartHeight - (chartHeight / yMax) * i}
+                x2={days.length * daySpacing}
+                y2={chartHeight - (chartHeight / yMax) * i}
+                stroke="#ddd"
+                strokeWidth={1}
               />
+            ))}
 
-              {/* On-Time (yellow) */}
-              <AnimatedRect
-                x={i * 70 + 20}
-                width={40}
-                animatedProps={onTimeProps}
-                fill="#f1c40f"
-                rx={4}
-              />
+            {/* Bars */}
+            {grouped.map((g, dayIndex) => {
+              return g.tasks.map((task, barIndex) => {
+                const barHeight =
+                  (g.tasks.length / yMax) * chartHeight;
 
-              {/* Late (red) */}
-              <AnimatedRect
-                x={i * 70 + 20}
-                width={40}
-                animatedProps={lateProps}
-                fill="#e74c3c"
-                rx={4}
-              />
+                return (
+                  <Rect
+                    key={task.id}
+                    x={
+                      dayIndex * daySpacing +
+                      barIndex * (barWidth + barSpacing)
+                    }
+                    y={chartHeight - barHeight}
+                    width={barWidth}
+                    height={barHeight}
+                    fill={priorityColors[task.priority]}
+                    rx={3}
+                  />
+                );
+              });
+            })}
 
-              {/* Numbers above bar */}
-              <Text
-                style={{
-                  position: 'absolute',
-                  left: i * 70 + 35,
-                  top: 210,
-                  fontSize: 14,
-                  fontWeight: '600',
-                }}
+            {/* X-axis labels */}
+            {grouped.map((g, dayIndex) => (
+              <SvgText
+                key={dayIndex}
+                x={dayIndex * daySpacing + 10}
+                y={chartHeight - 2}
+                fontSize={10}
+                fill="#333"
+                textAnchor="middle"
               >
-                {total}
-              </Text>
-
-              {/* Date label */}
-              <Text
-                style={{
-                  position: 'absolute',
-                  left: i * 70 + 10,
-                  top: 230,
-                  width: 70,
-                  textAlign: 'center',
-                  fontSize: 12,
-                }}
-              >
-                {new Date(d.date).toLocaleDateString('en-GB', {
-                  day: 'numeric',
-                  month: 'short',
-                })}
-              </Text>
-            </React.Fragment>
-          );
-        })}
-      </Svg>
+                {g.day.getDate()}
+              </SvgText>
+            ))}
+          </Svg>
+        </ScrollView>
+      </View>
     </View>
   );
 }
