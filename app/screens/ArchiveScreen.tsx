@@ -36,10 +36,10 @@ const priorityLabels = [
   { value: "not-urgent-not-important", label: "Not Urgent & Not Important" },
 ];
 
-const formatDate = (d: Date) =>
-  `${d.getDate().toString().padStart(2, "0")}/${(d.getMonth() + 1)
-    .toString()
-    .padStart(2, "0")}/${d.getFullYear()}`;
+const formatShortDate = (d: Date) =>
+  `${d.getDate().toString().padStart(2, "0")} ${d.toLocaleString("default", {
+    month: "short",
+  })}`;
 
 export default function ArchiveScreen() {
   const [allTasks, setAllTasks] = useState<Task[]>([]);
@@ -117,7 +117,16 @@ export default function ArchiveScreen() {
     const dayTasks = filteredTasks.filter(
       (t) => t.completedAt.split("T")[0] === dayStr
     );
-    return { day, tasks: dayTasks };
+
+    // Reverse priority order (Option 3)
+    const ordered = [
+      "not-urgent-not-important",
+      "not-urgent-important",
+      "urgent-not-important",
+      "urgent-important",
+    ].flatMap((p) => dayTasks.filter((t) => t.priority === p));
+
+    return { day, tasks: ordered };
   });
 
   // Y-axis max
@@ -128,8 +137,7 @@ export default function ArchiveScreen() {
   const yMax = maxTasksPerDay + 1;
 
   const timelineHeight = 200;
-  const barWidth = 12;
-  const barSpacing = 4;
+  const barSize = 12;
   const daySpacing = 40;
 
   return (
@@ -158,6 +166,7 @@ export default function ArchiveScreen() {
                 <Picker
                   selectedValue={priorityFilter}
                   onValueChange={(v) => setPriorityFilter(v)}
+                  style={{ color: "#000" }}
                 >
                   <Picker.Item label="All Priorities" value={null} />
                   {priorityLabels.map((p) => (
@@ -197,6 +206,7 @@ export default function ArchiveScreen() {
                 <Picker
                   selectedValue={timelineRange}
                   onValueChange={(v) => setTimelineRange(v)}
+                  style={{ color: "#000" }}
                 >
                   <Picker.Item label="Today" value="today" />
                   <Picker.Item label="This Week" value="week" />
@@ -210,23 +220,26 @@ export default function ArchiveScreen() {
         )}
       </View>
 
+      {/* Permanent Legend */}
+      <View style={styles.legendContainer}>
+        <Text style={styles.legendHeader}>Legend</Text>
+        {priorityLabels.map((p) => (
+          <View key={p.value} style={styles.legendRow}>
+            <View
+              style={[
+                styles.legendColor,
+                { backgroundColor: priorityColors[p.value] },
+              ]}
+            />
+            <Text style={styles.legendText}>{p.label}</Text>
+          </View>
+        ))}
+      </View>
+
       {/* Priority Graph */}
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Tasks by Priority</Text>
 
-        {/* Legend */}
-        <View style={{ flexDirection: "row", marginBottom: 10 }}>
-          {priorityLabels.map((p) => (
-            <View key={p.value} style={styles.legendItem}>
-              <View
-                style={[styles.legendColor, { backgroundColor: priorityColors[p.value] }]}
-              />
-              <Text style={styles.legendText}>{p.label}</Text>
-            </View>
-          ))}
-        </View>
-
-        {/* Graph */}
         <Svg width={320} height={180}>
           {priorityLabels.map((p, index) => {
             const count = priorityCounts[p.value];
@@ -272,19 +285,6 @@ export default function ArchiveScreen() {
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Completion Timeline</Text>
 
-        {/* Legend */}
-        <View style={{ flexDirection: "row", marginBottom: 10 }}>
-          {priorityLabels.map((p) => (
-            <View key={p.value} style={styles.legendItem}>
-              <View
-                style={[styles.legendColor, { backgroundColor: priorityColors[p.value] }]}
-              />
-              <Text style={styles.legendText}>{p.label}</Text>
-            </View>
-          ))}
-        </View>
-
-        {/* Y-axis + timeline */}
         <View style={{ flexDirection: "row" }}>
           {/* Y-axis numbers */}
           <View style={{ width: 30 }}>
@@ -318,28 +318,62 @@ export default function ArchiveScreen() {
                 />
               ))}
 
-              {/* Bars */}
+              {/* Bars (stacked upward) */}
               {grouped.map((g, dayIndex) =>
                 g.tasks.map((task, barIndex) => {
-                  const barHeight =
-                    (g.tasks.length / yMax) * timelineHeight;
+                  const x = dayIndex * daySpacing + 10;
+                  const y =
+                    timelineHeight -
+                    (barIndex + 1) * barSize;
 
                   return (
                     <Rect
                       key={task.id}
-                      x={
-                        dayIndex * daySpacing +
-                        barIndex * (barWidth + barSpacing)
-                      }
-                      y={timelineHeight - barHeight}
-                      width={barWidth}
-                      height={barHeight}
+                      x={x}
+                      y={y}
+                      width={barSize}
+                      height={barSize}
                       fill={priorityColors[task.priority]}
                       rx={3}
                     />
                   );
                 })
               )}
+
+              {/* Year-change markers */}
+{grouped.map((g, dayIndex) => {
+  if (
+    dayIndex > 0 &&
+    g.day.getFullYear() !== grouped[dayIndex - 1].day.getFullYear()
+  ) {
+    const x = dayIndex * daySpacing + 10;
+
+    return (
+      <>
+        <Line
+          x1={x}
+          y1={0}
+          x2={x}
+          y2={timelineHeight}
+          stroke="#000"
+          strokeWidth={1.5}
+        />
+        <SvgText
+          x={x}
+          y={14}
+          fontSize={12}
+          fill="#000"
+          textAnchor="middle"
+          fontWeight="bold"
+        >
+          {g.day.getFullYear()}
+        </SvgText>
+      </>
+    );
+  }
+  return null;
+})}
+
 
               {/* X-axis labels */}
               {grouped.map((g, dayIndex) => (
@@ -351,7 +385,7 @@ export default function ArchiveScreen() {
                   fill="#333"
                   textAnchor="middle"
                 >
-                  {g.day.getDate()}
+                  {formatShortDate(g.day)}
                 </SvgText>
               ))}
             </Svg>
@@ -380,7 +414,7 @@ export default function ArchiveScreen() {
                 <View style={styles.taskCardContent}>
                   <Text style={styles.taskTitle}>{task.title}</Text>
                   <Text style={styles.taskLine}>
-                    Completed: {formatDate(new Date(task.completedAt))}
+                    Completed: {formatShortDate(new Date(task.completedAt))}
                   </Text>
                   <Text style={[styles.taskLine, { color }]}>
                     Priority: {label}
@@ -442,6 +476,37 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     marginBottom: 10,
   },
+
+  legendContainer: {
+    backgroundColor: "#fff",
+    padding: 12,
+    borderRadius: 12,
+    marginBottom: 20,
+    shadowColor: "#000",
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  legendHeader: {
+    fontSize: 16,
+    fontWeight: "bold",
+    marginBottom: 8,
+  },
+  legendRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 6,
+  },
+  legendColor: {
+    width: 12,
+    height: 12,
+    borderRadius: 3,
+    marginRight: 6,
+  },
+  legendText: {
+    fontSize: 14,
+  },
+
   card: {
     backgroundColor: "#fff",
     borderRadius: 12,
@@ -457,20 +522,7 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     marginBottom: 12,
   },
-  legendItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginRight: 12,
-  },
-  legendColor: {
-    width: 12,
-    height: 12,
-    borderRadius: 3,
-    marginRight: 4,
-  },
-  legendText: {
-    fontSize: 12,
-  },
+
   sectionTitle: {
     fontSize: 18,
     fontWeight: "bold",
@@ -479,6 +531,7 @@ const styles = StyleSheet.create({
   emptyText: {
     color: "#777",
   },
+
   taskCardWrapper: {
     flexDirection: "row",
     backgroundColor: "#fff",
