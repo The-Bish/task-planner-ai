@@ -1,9 +1,16 @@
 import React, { useCallback, useRef, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import Svg, { Rect, Circle, Line, Text as SvgText } from 'react-native-svg';
+import Svg, {
+  Rect,
+  Circle,
+  Line,
+  G,
+  Defs,
+  ClipPath,
+  Text as SvgText,
+} from 'react-native-svg';
 import { loadActiveTasks, loadCompletedTasks } from '../storage/taskStorage';
-import PriorityLegend from '../components/PriorityLegend';
 import { getPriorityColor } from '../theme/priorityColors';
 
 const WEEK_W = 84; // width of one week
@@ -15,13 +22,20 @@ const BAR_Y = 12;
 const BAR_H = 24;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-type Milestone = { id: string; title: string; date: Date; done: boolean };
+const GREY = '#d0d0d0';
+const GREY_DARK = '#888';
+const GREEN = '#2ecc71';
+const ORANGE = '#f39c12';
+
+type Status = 'pending' | 'ontime' | 'late';
+type Milestone = { id: string; title: string; date: Date; completedAt: Date | null };
 type Row = {
   id: string;
   title: string;
   priority: string;
   start: Date;
   end: Date;
+  completedAt: Date | null;
   milestones: Milestone[];
   done: number;
   total: number;
@@ -55,6 +69,12 @@ const shortDate = (d: Date) =>
 
 const clip = (t: string, n = 12) => (t.length > n ? t.slice(0, n - 1) + '…' : t);
 
+// Not done yet / done on time or early / done after the due date
+const statusOf = (due: Date, completedAt: Date | null): Status => {
+  if (!completedAt) return 'pending';
+  return midnight(completedAt) > midnight(due) ? 'late' : 'ontime';
+};
+
 export default function GanttScreen() {
   const [chart, setChart] = useState<Chart | null>(null);
   const scrollRef = useRef<ScrollView>(null);
@@ -65,13 +85,19 @@ export default function GanttScreen() {
       const load = async () => {
         const active = await loadActiveTasks();
         const completed = await loadCompletedTasks();
-        const doneIds = new Set(completed.map((t: any) => t.id));
+        const completedById = new Map<string, any>(
+          completed.map((t: any) => [t.id, t])
+        );
         const everything = [...active, ...completed];
         const today = midnight(new Date());
+        const cutoff = new Date(today.getTime() - 30 * DAY_MS);
 
-        // Main tasks (not milestones) that have a due date
-        const mains = active.filter((t: any) => !t.parentId);
-        const withDates = mains.filter((t: any) => t.dueDate);
+        // Main tasks: everything open, plus anything finished in the last 30 days
+        const activeMains = active.filter((t: any) => !t.parentId);
+        const recentDone = completed.filter(
+          (t: any) => !t.parentId && t.completedAt && new Date(t.completedAt) >= cutoff
+        );
+        const withDates = [...activeMains, ...recentDone].filter((t: any) => t.dueDate);
 
         const rows: Row[] = withDates.map((t: any) => {
           const end = midnight(new Date(t.dueDate));
@@ -80,12 +106,15 @@ export default function GanttScreen() {
 
           const milestones: Milestone[] = everything
             .filter((m: any) => m.parentId === t.id && m.dueDate)
-            .map((m: any) => ({
-              id: m.id,
-              title: m.title,
-              date: midnight(new Date(m.dueDate)),
-              done: doneIds.has(m.id),
-            }))
+            .map((m: any) => {
+              const done = completedById.get(m.id);
+              return {
+                id: m.id,
+                title: m.title,
+                date: midnight(new Date(m.dueDate)),
+                completedAt: done?.completedAt ? new Date(done.completedAt) : null,
+              };
+            })
             .sort((a, b) => a.date.getTime() - b.date.getTime());
 
           return {
@@ -94,8 +123,9 @@ export default function GanttScreen() {
             priority: t.priority,
             start,
             end,
+            completedAt: t.completedAt ? new Date(t.completedAt) : null,
             milestones,
-            done: milestones.filter((m) => m.done).length,
+            done: milestones.filter((m) => m.completedAt).length,
             total: milestones.length,
           };
         });
@@ -103,14 +133,21 @@ export default function GanttScreen() {
         // Work out the date range to draw
         let min = today;
         let max = today;
+        const take = (d: Date | null) => {
+          if (!d) return;
+          if (d < min) min = d;
+          if (d > max) max = d;
+        };
         rows.forEach((r) => {
-          if (r.start < min) min = r.start;
-          if (r.end > max) max = r.end;
+          take(r.start);
+          take(r.end);
+          take(r.completedAt);
           r.milestones.forEach((m) => {
-            if (m.date < min) min = m.date;
-            if (m.date > max) max = m.date;
+            take(m.date);
+            take(m.completedAt);
           });
         });
+
         // Whole weeks, Monday to Sunday, with a spare week at the end
         const rangeStart = mondayOf(min);
         const totalWeeks =
@@ -121,7 +158,7 @@ export default function GanttScreen() {
           rows,
           rangeStart,
           totalWeeks,
-          hiddenCount: mains.length - withDates.length,
+          hiddenCount: activeMains.filter((t: any) => !t.dueDate).length,
         });
       };
       load();
@@ -167,13 +204,55 @@ export default function GanttScreen() {
     }
   }
 
+  // Split a task's bar into sections: one for each milestone, plus the
+  // final stretch up to the due date (which belongs to the main task itself)
+  const buildSections = (r: Row) => {
+    const secs: { from: number; to: number; status: Status; endIdx: number }[] = [];
+    let from = dayIdx(r.start);
+
+    r.milestones.forEach((m) => {
+      const to = dayIdx(m.date);
+      const status = statusOf(m.date, m.completedAt);
+      const doneIdx = m.completedAt ? dayIdx(m.completedAt) : to;
+      secs.push({ from, to, status, endIdx: status === 'late' ? Math.max(to, doneIdx) : to });
+      from = Math.max(from, to + 1);
+    });
+
+    const dueIdx = dayIdx(r.end);
+    if (r.milestones.length === 0 || dueIdx >= from) {
+      const status = statusOf(r.end, r.completedAt);
+      const doneIdx = r.completedAt ? dayIdx(r.completedAt) : dueIdx;
+      secs.push({
+        from,
+        to: dueIdx,
+        status,
+        endIdx: status === 'late' ? Math.max(dueIdx, doneIdx) : dueIdx,
+      });
+    }
+    return secs;
+  };
+
+  const colorFor = (s: Status) => (s === 'late' ? ORANGE : s === 'ontime' ? GREEN : GREY);
+
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Text style={styles.title}>Timeline</Text>
 
-      <PriorityLegend />
-      <Text style={styles.keyText}>
-        Each column is one week.     ○ milestone to do     ● milestone done
+      {/* Key */}
+      <View style={styles.key}>
+        {[
+          { color: GREY, label: 'Planned' },
+          { color: GREEN, label: 'Done on time / early' },
+          { color: ORANGE, label: 'Done late' },
+        ].map((k) => (
+          <View key={k.label} style={styles.keyItem}>
+            <View style={[styles.keySwatch, { backgroundColor: k.color }]} />
+            <Text style={styles.keyText}>{k.label}</Text>
+          </View>
+        ))}
+      </View>
+      <Text style={styles.keyNote}>
+        Each column is one week.   ○ milestone to do   ● milestone done
       </Text>
 
       <View style={styles.card}>
@@ -181,19 +260,39 @@ export default function GanttScreen() {
           {/* Task names (fixed on the left) */}
           <View style={{ width: LEFT_W }}>
             <View style={{ height: HEADER_H }} />
-            {rows.map((r) => (
-              <View key={r.id} style={styles.nameCell}>
-                <Text style={styles.nameText} numberOfLines={2}>
-                  {r.title}
-                </Text>
-                {r.total > 0 && (
-                  <Text style={styles.subText}>
-                    {r.done}/{r.total} milestones
-                  </Text>
-                )}
-                <Text style={styles.subText}>Due {shortDate(r.end)}</Text>
-              </View>
-            ))}
+            {rows.map((r) => {
+              const status = statusOf(r.end, r.completedAt);
+              return (
+                <View key={r.id} style={styles.nameCell}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <View
+                      style={[styles.dot, { backgroundColor: getPriorityColor(r.priority) }]}
+                    />
+                    <Text style={[styles.nameText, { flex: 1 }]} numberOfLines={2}>
+                      {r.title}
+                    </Text>
+                  </View>
+                  {r.total > 0 && (
+                    <Text style={styles.subText}>
+                      {r.done}/{r.total} milestones
+                    </Text>
+                  )}
+                  {r.completedAt ? (
+                    <Text
+                      style={[
+                        styles.subText,
+                        { color: status === 'late' ? ORANGE : '#27ae60', fontWeight: 'bold' },
+                      ]}
+                    >
+                      ✓ Done {shortDate(r.completedAt)}
+                      {status === 'late' ? ' (late)' : ''}
+                    </Text>
+                  ) : (
+                    <Text style={styles.subText}>Due {shortDate(r.end)}</Text>
+                  )}
+                </View>
+              );
+            })}
           </View>
 
           {/* Scrollable chart */}
@@ -280,20 +379,50 @@ export default function GanttScreen() {
 
               {/* Bars + milestones */}
               {rows.map((r, i) => {
-                const color = getPriorityColor(r.priority);
                 const barY = HEADER_H + i * ROW_H + BAR_Y;
-                const x = xOf(r.start);
-                const w = Math.max(xOf(r.end) + DAY_W - x, 14);
-                const progressW = r.total > 0 ? (w * r.done) / r.total : 0;
+                const secs = buildSections(r);
+                const startIdx = dayIdx(r.start);
+                const barEndIdx = Math.max(dayIdx(r.end), ...secs.map((s) => s.endIdx));
+                const barX = startIdx * DAY_W;
+                const barW = Math.max((barEndIdx + 1 - startIdx) * DAY_W, 14);
+                const clipId = `clip-${r.id}`;
+
+                // Draw on-time sections first so a late (orange) stretch shows on top
+                const coloured = secs
+                  .filter((s) => s.status !== 'pending')
+                  .sort((a, b) => (a.status === b.status ? 0 : a.status === 'ontime' ? -1 : 1));
 
                 return (
                   <React.Fragment key={r.id}>
-                    <Rect x={x} y={barY} width={w} height={BAR_H} rx={8} fill={color} opacity={0.3} />
-                    {progressW > 0 && (
-                      <Rect x={x} y={barY} width={progressW} height={BAR_H} rx={8} fill={color} />
-                    )}
+                    <Defs>
+                      <ClipPath id={clipId}>
+                        <Rect x={barX} y={barY} width={barW} height={BAR_H} rx={8} />
+                      </ClipPath>
+                    </Defs>
 
+                    {/* Grey bar, then coloured sections on top of it */}
+                    <Rect x={barX} y={barY} width={barW} height={BAR_H} rx={8} fill={GREY} />
+                    <G clipPath={`url(#${clipId})`}>
+                      {coloured.map((s, si) => {
+                        const x0 = s.from * DAY_W;
+                        const w = (s.endIdx + 1 - s.from) * DAY_W;
+                        if (w <= 0) return null;
+                        return (
+                          <Rect
+                            key={si}
+                            x={x0}
+                            y={barY}
+                            width={w}
+                            height={BAR_H}
+                            fill={colorFor(s.status)}
+                          />
+                        );
+                      })}
+                    </G>
+
+                    {/* Milestones */}
                     {r.milestones.map((m, mi) => {
+                      const st = statusOf(m.date, m.completedAt);
                       const cx = xOf(m.date) + DAY_W / 2;
                       return (
                         <React.Fragment key={m.id}>
@@ -301,8 +430,8 @@ export default function GanttScreen() {
                             cx={cx}
                             cy={barY + BAR_H / 2}
                             r={8}
-                            fill={m.done ? color : '#fff'}
-                            stroke={m.done ? '#fff' : color}
+                            fill={st === 'pending' ? '#fff' : colorFor(st)}
+                            stroke={st === 'pending' ? GREY_DARK : '#fff'}
                             strokeWidth={2.5}
                           />
                           <SvgText
@@ -337,6 +466,7 @@ export default function GanttScreen() {
           {hiddenCount !== 1 ? ' aren’t' : ' isn’t'} shown.
         </Text>
       )}
+      <Text style={styles.footer}>Tasks completed in the last 30 days stay on the timeline.</Text>
     </ScrollView>
   );
 }
@@ -346,7 +476,19 @@ const styles = StyleSheet.create({
   content: { padding: 16, paddingBottom: 40 },
   title: { fontSize: 24, fontWeight: 'bold', color: '#000', marginBottom: 16 },
   empty: { fontSize: 16, color: '#777' },
-  keyText: { fontSize: 12, color: '#555', marginBottom: 10 },
+  key: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    marginBottom: 8,
+  },
+  keyItem: { flexDirection: 'row', alignItems: 'center', marginRight: 14, paddingVertical: 3 },
+  keySwatch: { width: 14, height: 14, borderRadius: 4, marginRight: 6 },
+  keyText: { fontSize: 12, color: '#000' },
+  keyNote: { fontSize: 12, color: '#555', marginBottom: 10 },
   card: {
     backgroundColor: '#fff',
     borderRadius: 12,
@@ -364,6 +506,7 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: '#ddd',
   },
+  dot: { width: 10, height: 10, borderRadius: 3, marginRight: 6 },
   nameText: { fontSize: 14, fontWeight: 'bold', color: '#000' },
   subText: { fontSize: 11, color: '#666', marginTop: 1 },
   footer: { fontSize: 13, color: '#777', marginTop: 12 },
