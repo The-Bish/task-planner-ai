@@ -102,7 +102,22 @@ export default function CompletedScreen() {
             <Text style={{ marginTop: 4 }}>{task.description}</Text>
           )}
 
-          <Text style={{ marginTop: 8 }}>
+          {task.category && (
+            <View
+              style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}
+            >
+              <MaterialIcons
+                name={task.category === 'work' ? 'business' : 'home'}
+                size={18}
+                color="#555"
+              />
+              <Text style={{ marginLeft: 6 }}>
+                {task.category === 'work' ? 'Work' : 'Personal'}
+              </Text>
+            </View>
+          )}
+
+          <Text style={{ marginTop: task.category ? 4 : 8 }}>
             Completed: {formatDate(task.completedAt)}
           </Text>
 		

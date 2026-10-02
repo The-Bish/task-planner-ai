@@ -46,6 +46,10 @@ export default function HomeScreen() {
   const [completedThisWeek, setCompletedThisWeek] = useState<string[][]>([[], [], [], [], [], [], []]);
   const [streak, setStreak] = useState(0);
   const [completedTodayTasks, setCompletedTodayTasks] = useState<any[]>([]);
+  const [milestoneStats, setMilestoneStats] = useState<
+    Record<string, { done: number; total: number }>
+  >({});
+  const [parentTitles, setParentTitles] = useState<Record<string, string>>({});
   const [overdueTasks, setOverdueTasks] = useState(0);
   const [nextDeadline, setNextDeadline] = useState<string | null>(null);
 
@@ -87,11 +91,36 @@ export default function HomeScreen() {
     // Active tasks
     setTasks(active);
 
+    // Milestone counters (done / total) for each main task, plus a lookup of
+    // task titles so a milestone can say which task it belongs to
+    const stats: Record<string, { done: number; total: number }> = {};
+    const titles: Record<string, string> = {};
+    active.forEach((t: any) => {
+      titles[t.id] = t.title;
+      if (t.parentId) {
+        stats[t.parentId] = stats[t.parentId] || { done: 0, total: 0 };
+        stats[t.parentId].total += 1;
+      }
+    });
+    completed.forEach((t: any) => {
+      titles[t.id] = t.title;
+      if (t.parentId) {
+        stats[t.parentId] = stats[t.parentId] || { done: 0, total: 0 };
+        stats[t.parentId].total += 1;
+        stats[t.parentId].done += 1;
+      }
+    });
+    setMilestoneStats(stats);
+    setParentTitles(titles);
+
     // Completed today
     const today = new Date().toDateString();
     const doneToday = completed
       .filter(
-        (t) => t.completedAt && new Date(t.completedAt).toDateString() === today
+        (t) =>
+          t.completedAt &&
+          !t.hasMilestones &&
+          new Date(t.completedAt).toDateString() === today
       )
       .sort(
         (a, b) =>
@@ -111,7 +140,7 @@ export default function HomeScreen() {
 
     const weekData: string[][] = [[], [], [], [], [], [], []];
     [...completed]
-      .filter((t) => t.completedAt)
+      .filter((t) => t.completedAt && !t.hasMilestones)
       .sort(
         (a, b) =>
           new Date(a.completedAt).getTime() - new Date(b.completedAt).getTime()
@@ -211,7 +240,10 @@ export default function HomeScreen() {
           style: 'destructive',
           onPress: async () => {
             const active = await loadActiveTasks();
-            const updated = active.filter((t) => t.id !== taskId);
+            // Deleting a main task also removes its milestones
+            const updated = active.filter(
+              (t) => t.id !== taskId && t.parentId !== taskId
+            );
             await saveActiveTasks(updated);
             await recalcDashboard();
           },
@@ -224,8 +256,22 @@ export default function HomeScreen() {
   // colour (in the order they were finished), open ones left grey.
   const ringSegments: (string | null)[] = [
     ...completedTodayTasks.map((t) => getPriorityColor(t.priority)),
-    ...tasks.map(() => null),
+    ...tasks.filter((t) => !t.hasMilestones).map(() => null),
   ];
+
+  // Show each main task followed by its milestones
+  const topLevel = tasks.filter(
+    (t) => !(t.parentId && tasks.some((p) => p.id === t.parentId))
+  );
+  const orderedTasks = topLevel.flatMap((t) => [
+    t,
+    ...tasks
+      .filter((m) => m.parentId === t.id)
+      .sort(
+        (a, b) =>
+          new Date(a.dueDate || 0).getTime() - new Date(b.dueDate || 0).getTime()
+      ),
+  ]);
 
   return (
     <ScrollView style={{ padding: 16 }}>
@@ -289,10 +335,15 @@ export default function HomeScreen() {
         </Text>
       )}
 
-      {tasks.map((task) => (
+      {orderedTasks.map((task) => {
+        const isChild =
+          !!task.parentId && tasks.some((p) => p.id === task.parentId);
+        const stats = milestoneStats[task.id];
+        return (
         <View
           key={task.id}
           style={{
+            marginLeft: isChild ? 24 : 0,
             padding: 12,
             borderWidth: 2,
             borderColor: getPriorityColor(task.priority),
@@ -345,6 +396,42 @@ export default function HomeScreen() {
 
           <Text style={{ marginTop: 4 }}>Due: {formatDate(task.dueDate)}</Text>
 
+          {task.parentId && (
+            <View
+              style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}
+            >
+              <MaterialIcons name="flag" size={18} color="#555" />
+              <Text style={{ marginLeft: 6, flexShrink: 1 }}>
+                Milestone of {parentTitles[task.parentId] ?? 'another task'}
+              </Text>
+            </View>
+          )}
+
+          {!task.parentId && stats && stats.total > 0 && (
+            <View style={{ marginTop: 10 }}>
+              <Text style={{ fontWeight: 'bold' }}>
+                Milestones: {stats.done}/{stats.total}
+              </Text>
+              <View
+                style={{
+                  height: 8,
+                  borderRadius: 4,
+                  backgroundColor: '#00000018',
+                  marginTop: 4,
+                  overflow: 'hidden',
+                }}
+              >
+                <View
+                  style={{
+                    height: 8,
+                    width: `${(stats.done / stats.total) * 100}%`,
+                    backgroundColor: getPriorityColor(task.priority),
+                  }}
+                />
+              </View>
+            </View>
+          )}
+
           <View
             style={{
               flexDirection: 'row',
@@ -362,7 +449,8 @@ export default function HomeScreen() {
             </TouchableOpacity>
           </View>
         </View>
-      ))}
+        );
+      })}
     </ScrollView>
   );
 }

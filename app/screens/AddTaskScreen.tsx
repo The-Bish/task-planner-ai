@@ -7,10 +7,12 @@ import {
   TouchableOpacity,
   Alert,
   StyleSheet,
+  Modal,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialIcons } from '@expo/vector-icons';
+import { loadActiveTasks, saveActiveTasks } from '../storage/taskStorage';
 import {
   priorityColors,
   priorityLabels,
@@ -30,6 +32,11 @@ function formatDate(date: Date | null) {
   return date.toLocaleDateString('en-GB');
 }
 
+type MilestoneDraft = { id: string; title: string; date: Date | null };
+
+const newId = (extra = '') =>
+  Date.now().toString(36) + Math.random().toString(36).slice(2, 7) + extra;
+
 export default function AddTaskScreen() {
   const nav = useNavigation();
 
@@ -40,31 +47,111 @@ export default function AddTaskScreen() {
   const [dueDate, setDueDate] = useState<Date | null>(null);
   const [showPicker, setShowPicker] = useState(false);
 
+  // Milestones
+  const [showMilestones, setShowMilestones] = useState(false);
+  const [milestones, setMilestones] = useState<MilestoneDraft[]>([]);
+  const [mTitle, setMTitle] = useState('');
+  const [mDate, setMDate] = useState<Date | null>(null);
+  const [showMPicker, setShowMPicker] = useState(false);
+
+  const resetForm = () => {
+    setTitle('');
+    setDescription('');
+    setPriority('not-urgent-important');
+    setCategory('work');
+    setDueDate(null);
+    setMilestones([]);
+    setMTitle('');
+    setMDate(null);
+  };
+
+  // Builds the main task (and its milestones, if any), saves them, and goes Home
+  const commitTasks = async (list: MilestoneDraft[]) => {
+    const now = new Date();
+    const parentId = newId();
+    const cleanTitle = title.trim();
+
+    const parent = {
+      id: parentId,
+      title: cleanTitle,
+      description: description.trim() || cleanTitle,
+      priority,
+      category,
+      dueDate: dueDate ? dueDate.toISOString() : null,
+      completed: false,
+      createdAt: now.toISOString(),
+      hasMilestones: list.length > 0,
+    };
+
+    // Milestones without a date are spread evenly between now and the due date
+    const startMs = now.getTime();
+    const endMs = dueDate ? dueDate.getTime() : startMs;
+    const children = list.map((m, i) => {
+      const date =
+        m.date ?? new Date(startMs + ((endMs - startMs) * (i + 1)) / list.length);
+      return {
+        id: newId(String(i)),
+        title: m.title,
+        description: m.title,
+        priority,
+        category,
+        dueDate: date.toISOString(),
+        completed: false,
+        createdAt: now.toISOString(),
+        parentId,
+        isMilestone: true,
+      };
+    });
+
+    const active = await loadActiveTasks();
+    await saveActiveTasks([...active, parent, ...children]);
+
+    setShowMilestones(false);
+    resetForm();
+    nav.navigate('Home' as never);
+  };
+
   const saveTask = () => {
     if (!title.trim()) {
       Alert.alert('Add a title', 'Please give your task a title first.');
       return;
     }
 
-    const newTask = {
-      id: Math.random().toString(36).slice(2, 9),
-      title: title.trim(),
-      description: description.trim() || title.trim(),
-      priority,
-      category,
-      dueDate: dueDate ? dueDate.toISOString() : null,
-      completed: false,
-    };
-
-    nav.navigate('Home' as never, { newTask, refresh: Date.now() } as never);
-
-    // Clear the form ready for the next task
-    setTitle('');
-    setDescription('');
-    setPriority('not-urgent-important');
-    setCategory('work');
-    setDueDate(null);
+    Alert.alert(
+      'Break it down?',
+      `Would you like to split "${title.trim()}" into smaller milestones?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'No, just add it', onPress: () => commitTasks([]) },
+        {
+          text: 'Yes, add milestones',
+          onPress: () => {
+            if (!dueDate) {
+              Alert.alert(
+                'Add a due date first',
+                'Pick a due date so the milestones can be placed on the timeline.'
+              );
+              return;
+            }
+            setShowMilestones(true);
+          },
+        },
+      ]
+    );
   };
+
+  const addMilestone = () => {
+    if (!mTitle.trim()) return;
+    setMilestones((prev) => [
+      ...prev,
+      { id: newId(), title: mTitle.trim(), date: mDate },
+    ]);
+    setMTitle('');
+    setMDate(null);
+  };
+
+  const removeMilestone = (id: string) =>
+    setMilestones((prev) => prev.filter((m) => m.id !== id));
 
   return (
     <ScrollView
@@ -210,6 +297,130 @@ export default function AddTaskScreen() {
       <TouchableOpacity style={styles.saveButton} onPress={saveTask}>
         <Text style={styles.saveButtonText}>Save Task</Text>
       </TouchableOpacity>
+
+      {/* Milestones */}
+      <Modal
+        visible={showMilestones}
+        animationType="slide"
+        onRequestClose={() => setShowMilestones(false)}
+      >
+        <ScrollView
+          style={styles.container}
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="handled"
+        >
+          <Text style={styles.title}>Milestones</Text>
+          <Text style={styles.subtitle}>
+            Smaller steps towards finishing "{title.trim()}". Each one shows up
+            as its own task.
+          </Text>
+
+          <View style={styles.card}>
+            <Text style={styles.label}>New milestone</Text>
+            <TextInput
+              placeholder="e.g. Write the first draft"
+              placeholderTextColor="#999"
+              value={mTitle}
+              onChangeText={setMTitle}
+              style={styles.input}
+            />
+
+            <View style={[styles.dateRow, { marginTop: 12 }]}>
+              <TouchableOpacity
+                style={styles.dateButton}
+                onPress={() => setShowMPicker(true)}
+              >
+                <MaterialIcons name="event" size={22} color="#3498db" />
+                <Text style={styles.dateText}>
+                  {mDate ? formatDate(mDate) : 'Date (optional)'}
+                </Text>
+              </TouchableOpacity>
+              {mDate && (
+                <TouchableOpacity onPress={() => setMDate(null)}>
+                  <Text style={styles.clearText}>Clear</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {showMPicker && (
+              <DateTimePicker
+                value={mDate || new Date()}
+                mode="date"
+                display="default"
+                onChange={(event, selectedDate) => {
+                  setShowMPicker(false);
+                  if (selectedDate) setMDate(selectedDate);
+                }}
+              />
+            )}
+
+            <TouchableOpacity
+              style={[styles.addMilestoneButton, !mTitle.trim() && { opacity: 0.4 }]}
+              onPress={addMilestone}
+              disabled={!mTitle.trim()}
+            >
+              <MaterialIcons name="add" size={22} color="#fff" />
+              <Text style={styles.addMilestoneText}>Add milestone</Text>
+            </TouchableOpacity>
+            <Text style={styles.hint}>
+              No date? We'll spread them evenly up to the due date.
+            </Text>
+          </View>
+
+          {milestones.length > 0 && (
+            <View style={styles.card}>
+              <Text style={styles.label}>
+                Your milestones ({milestones.length})
+              </Text>
+              {milestones.map((m, i) => (
+                <View
+                  key={m.id}
+                  style={[
+                    styles.milestoneRow,
+                    {
+                      borderColor: getPriorityColor(priority),
+                      backgroundColor: getPriorityTint(priority),
+                    },
+                  ]}
+                >
+                  <MaterialIcons name="flag" size={20} color="#555" />
+                  <View style={{ flex: 1, marginLeft: 8 }}>
+                    <Text style={{ fontSize: 15, fontWeight: 'bold' }}>
+                      {i + 1}. {m.title}
+                    </Text>
+                    {m.date && (
+                      <Text style={{ color: '#555' }}>{formatDate(m.date)}</Text>
+                    )}
+                  </View>
+                  <TouchableOpacity onPress={() => removeMilestone(m.id)}>
+                    <MaterialIcons name="close" size={22} color="#e74c3c" />
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </View>
+          )}
+
+          <TouchableOpacity
+            style={styles.saveButton}
+            onPress={() => commitTasks(milestones)}
+          >
+            <Text style={styles.saveButtonText}>
+              {milestones.length > 0
+                ? `Save task with ${milestones.length} milestone${
+                    milestones.length !== 1 ? 's' : ''
+                  }`
+                : 'Save task'}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={() => setShowMilestones(false)}
+          >
+            <Text style={styles.backText}>Back</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </Modal>
     </ScrollView>
   );
 }
@@ -288,6 +499,28 @@ const styles = StyleSheet.create({
   },
   dateText: { marginLeft: 8, fontSize: 16, color: '#000' },
   clearText: { color: '#e74c3c', fontSize: 15 },
+  subtitle: { fontSize: 15, color: '#555', marginBottom: 16, marginTop: -8 },
+  hint: { fontSize: 12, color: '#777', marginTop: 8 },
+  addMilestoneButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#3498db',
+    borderRadius: 12,
+    paddingVertical: 12,
+    marginTop: 14,
+  },
+  addMilestoneText: { color: '#fff', fontSize: 16, fontWeight: 'bold', marginLeft: 4 },
+  milestoneRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 2,
+    marginBottom: 8,
+  },
+  backButton: { alignItems: 'center', paddingVertical: 16 },
+  backText: { fontSize: 16, color: '#555' },
   saveButton: {
     backgroundColor: '#3498db',
     borderRadius: 12,
