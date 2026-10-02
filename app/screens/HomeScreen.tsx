@@ -51,15 +51,37 @@ export default function HomeScreen() {
 
   const recalcDashboard = async () => {
     let active = await loadActiveTasks();
-    const completed = await loadCompletedTasks();
+    let completed = await loadCompletedTasks();
+
+    // Tidy up any duplicates left over from earlier: a task should only
+    // appear once, and never in both the active and completed lists.
+    const seenIds = new Set<string>();
+    const dedupedCompleted = completed.filter((t: any) => {
+      if (seenIds.has(t.id)) return false;
+      seenIds.add(t.id);
+      return true;
+    });
+    if (dedupedCompleted.length !== completed.length) {
+      completed = dedupedCompleted;
+      await saveCompletedTasks(completed);
+    }
+    const cleanActive = active.filter((t: any) => !seenIds.has(t.id));
+    if (cleanActive.length !== active.length) {
+      active = cleanActive;
+      await saveActiveTasks(active);
+    }
 
     // If a newTask was passed in, add it to active and save
     if (newTask) {
-      const exists = active.some((t) => t.id === newTask.id);
+      const exists =
+        active.some((t: any) => t.id === newTask.id) ||
+        completed.some((t: any) => t.id === newTask.id);
       if (!exists) {
         active = [...active, newTask];
         await saveActiveTasks(active);
       }
+      // Clear it so it can never be added a second time
+      nav.setParams({ newTask: undefined } as never);
     }
 
     // Active tasks

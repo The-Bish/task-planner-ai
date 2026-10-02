@@ -22,7 +22,11 @@ export default function CompletedScreen() {
 
   const loadCompleted = async () => {
     const completed = await loadCompletedTasks();
-    setTasks(completed);
+    // Show each task only once, even if the saved data contains a duplicate
+    const unique = completed.filter(
+      (t: any, i: number) => completed.findIndex((x: any) => x.id === t.id) === i
+    );
+    setTasks(unique);
   };
 
   useEffect(() => {
